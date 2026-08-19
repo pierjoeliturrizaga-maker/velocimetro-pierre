@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Velocímetro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f6f4ee;
+    --panel:#ffffff;
+    --ink:#15130f;
+    --ink-ghost:#e2ddcd;
+    --dim:#8a8372;
+    --line:#ddd7c4;
+    --red:#c62828;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    font-family:'Space Mono', monospace;
+    overscroll-behavior:none;
+    -webkit-user-select:none; user-select:none;
+  }
+  body{
+    min-height:100vh; min-height:100dvh;
+    display:flex; flex-direction:column;
+    background:var(--bg); color:var(--ink);
+    transition: background-color .25s ease;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+
+  /* ---------- over-limit alert state: background flips, text goes white ---------- */
+  body.alert{
+    background: var(--red);
+    --ink: #ffffff;
+    --ink-ghost: rgba(255,255,255,0.28);
+    --dim: rgba(255,255,255,0.75);
+    --line: rgba(255,255,255,0.35);
+    --panel: rgba(255,255,255,0.12);
+  }
+
+  /* ---------- gate ---------- */
+  .gate{
+    flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; gap:16px; padding:0 10px;
+  }
+  .gate h1{ font-family:'Orbitron', sans-serif; font-weight:700; font-size:20px; margin:0; color:var(--ink); letter-spacing:.02em; }
+  .gate p{ font-size:12.5px; color:var(--dim); line-height:1.7; max-width:320px; margin:0; }
+  .gate button{
+    font-family:'Orbitron', sans-serif; font-weight:700; font-size:14px; letter-spacing:.05em;
+    background:var(--ink); color:var(--bg); border:none; border-radius:10px;
+    padding:15px 30px;
+  }
+  .err{ color:var(--red); font-size:11.5px; max-width:300px; }
+
+  /* ---------- top bar ---------- */
+  .topbar{
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim);
+  }
+  .gps{ display:flex; align-items:center; gap:6px; }
+  .gps-dot{ width:7px; height:7px; border-radius:50%; background:var(--line); }
+  .gps-dot.ok{ background:#3f7d3a; box-shadow:0 0 6px #3f7d3a; }
+  .gps-dot.weak{ background:#b8791f; box-shadow:0 0 6px #b8791f; }
+  body.alert .gps-dot.ok{ background:#fff; box-shadow:none; }
+  body.alert .gps-dot.weak{ background:#fff; box-shadow:none; }
+
+  /* ---------- main digit display ---------- */
+  .display-wrap{
+    flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    position:relative;
+  }
+  .digit-stack{ position:relative; text-align:center; }
+  .ghost, .value{
+    font-family:'Orbitron', sans-serif; font-weight:900;
+    font-size: clamp(90px, 34vw, 220px);
+    line-height:1; letter-spacing:0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+  .ghost{ color: var(--ink-ghost); transition: color .25s ease; }
+  .value{
+    position:absolute; top:0; left:0; width:100%;
+    color:var(--ink);
+    transition: color .15s ease;
+  }
+  .unit{
+    margin-top:2px;
+    font-family:'Orbitron', sans-serif; font-size:14px; letter-spacing:.3em;
+    color:var(--dim);
+  }
+
+  /* ---------- LED-style bar graph ---------- */
+  .bargraph{
+    display:flex; gap:3px; width:100%; max-width:520px; margin: 18px auto 4px;
+    padding:0 4px;
+  }
+  .seg{
+    flex:1; height:16px; border-radius:2px; background:var(--line);
+    transition:background-color .08s linear;
+  }
+  .scale-labels{
+    display:flex; justify-content:space-between; width:100%; max-width:520px; margin:2px auto 0;
+    padding:0 4px; font-size:9.5px; color:var(--dim); letter-spacing:.05em;
+  }
+
+  /* ---------- stats row ---------- */
+  .stats{
+    display:grid; grid-template-columns:1fr 1fr 1fr; gap:1px;
+    background:var(--line); border:1px solid var(--line); border-radius:12px; overflow:hidden;
+    margin-top:16px;
+  }
+  .stat{ background:var(--panel); padding:11px 6px; text-align:center; }
+  .stat-val{ font-family:'Orbitron', sans-serif; font-size:16px; color:var(--ink); font-variant-numeric: tabular-nums; }
+  .stat-lbl{ font-size:9px; color:var(--dim); margin-top:3px; letter-spacing:.08em; text-transform:uppercase; }
+
+  .controls{ display:flex; gap:10px; margin-top:12px; }
+  button.ghostbtn{
+    flex:1; font-family:'Orbitron', sans-serif; font-weight:700; font-size:12.5px; letter-spacing:.05em;
+    background:var(--panel); border:1px solid var(--line); color:var(--dim);
+    border-radius:10px; padding:12px 0;
+  }
+
+  /* ---------- landscape adaptation ---------- */
+  @media (orientation: landscape){
+    body{ padding-left: max(28px, env(safe-area-inset-left)); padding-right: max(28px, env(safe-area-inset-right)); }
+    .display-wrap{ flex-direction:row; gap:34px; }
+    .digit-stack{ order:1; }
+    .side-landscape{ order:2; display:flex; flex-direction:column; gap:10px; width:220px; }
+    .bargraph{ margin:0; max-width:none; }
+    .scale-labels{ max-width:none; }
+    .value, .ghost{ font-size: clamp(80px, 20vw, 170px); }
+    .stats{ margin-top:0; }
+    .unit{ text-align:center; }
+  }
+
+  .hidden{ display:none !important; }
+</style>
+</head>
+<body>
+
+  <!-- GATE -->
+  <div class="gate" id="gate">
+    <div style="font-size:10.5px; letter-spacing:.2em; color:var(--dim); text-transform:uppercase;">Velocímetro GPS</div>
+    <h1>PARA TU MOTO,<br>SIN VELOCÍMETRO</h1>
+    <p>Usa el GPS del celular para calcular tu velocidad en tiempo real. Necesita permiso de ubicación — el navegador te lo va a pedir al tocar el botón.</p>
+    <button id="startBtn">Activar GPS</button>
+    <div class="err hidden" id="err"></div>
+  </div>
+
+  <!-- APP -->
+  <div id="app" class="hidden" style="display:flex; flex-direction:column; flex:1;">
+    <div class="topbar">
+      <span>Velocímetro</span>
+      <span class="gps"><span class="gps-dot" id="gpsDot"></span><span id="gpsText">buscando señal</span></span>
+    </div>
+
+    <div class="display-wrap">
+      <div class="digit-stack">
+        <div class="ghost">888</div>
+        <div class="value" id="speedVal">0</div>
+        <div class="unit">KM/H</div>
+      </div>
+
+      <div class="side-landscape" id="sideBlock">
+        <div>
+          <div class="bargraph" id="bargraph"></div>
+          <div class="scale-labels"><span>0</span><span id="scaleMax">160</span></div>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="stat-val" id="maxVal">0</div><div class="stat-lbl">máx.</div></div>
+          <div class="stat"><div class="stat-val" id="accVal">–</div><div class="stat-lbl">precisión m</div></div>
+          <div class="stat"><div class="stat-val" id="limitVal">60</div><div class="stat-lbl">límite</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="ghostbtn" id="resetBtn">Reiniciar máx.</button>
+    </div>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  var watchId = null;
+  var wakeLock = null;
+  var maxSpeed = 0;
+  var limitKmh = 60;
+  var SCALE_MAX = 160;
+  var N_SEGMENTS = 32;
+
+  var lastFix = null;
+  var smoothedKmh = 0;
+
+  var gate = document.getElementById('gate');
+  var app = document.getElementById('app');
+  var startBtn = document.getElementById('startBtn');
+  var errBox = document.getElementById('err');
+  var speedVal = document.getElementById('speedVal');
+  var gpsDot = document.getElementById('gpsDot');
+  var gpsText = document.getElementById('gpsText');
+  var bargraph = document.getElementById('bargraph');
+  var maxValEl = document.getElementById('maxVal');
+  var accValEl = document.getElementById('accVal');
+  var limitValEl = document.getElementById('limitVal');
+  var scaleMaxEl = document.getElementById('scaleMax');
+  var resetBtn = document.getElementById('resetBtn');
+
+  limitValEl.textContent = limitKmh;
+  scaleMaxEl.textContent = SCALE_MAX;
+
+  for (var i=0; i<N_SEGMENTS; i++){
+    var d = document.createElement('div');
+    d.className = 'seg';
+    bargraph.appendChild(d);
+  }
+  var segEls = bargraph.querySelectorAll('.seg');
+
+  function toRad(v){ return v * Math.PI / 180; }
+  function haversineMeters(lat1, lon1, lat2, lon2){
+    var R = 6371000;
+    var dLat = toRad(lat2-lat1);
+    var dLon = toRad(lon2-lon1);
+    var a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+            Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)*Math.sin(dLon/2);
+    var c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R*c;
+  }
+
+  function updateBar(kmh, over){
+    var litCount = Math.round(Math.min(1, kmh / SCALE_MAX) * N_SEGMENTS);
+    segEls.forEach(function(seg, i){
+      if (i < litCount) {
+        if (over) {
+          seg.style.background = '#ffffff';
+          seg.style.boxShadow = '0 0 4px rgba(255,255,255,0.7)';
+        } else {
+          seg.style.background = 'var(--ink)';
+          seg.style.boxShadow = 'none';
+        }
+      } else {
+        seg.style.background = over ? 'rgba(255,255,255,0.3)' : 'var(--line)';
+        seg.style.boxShadow = 'none';
+      }
+    });
+  }
+
+  function renderSpeed(kmh){
+    smoothedKmh = smoothedKmh === 0 ? kmh : smoothedKmh*0.65 + kmh*0.35;
+    var display = Math.max(0, Math.round(smoothedKmh));
+    var over = display > limitKmh;
+
+    speedVal.textContent = display;
+    document.body.classList.toggle('alert', over);
+
+    if (display > maxSpeed){
+      maxSpeed = display;
+      maxValEl.textContent = maxSpeed;
+    }
+    updateBar(display, over);
+  }
+
+  function handlePosition(pos){
+    var c = pos.coords;
+    gpsDot.className = 'gps-dot ' + (c.accuracy <= 15 ? 'ok' : 'weak');
+    gpsText.textContent = c.accuracy <= 15 ? 'señal buena' : 'señal débil';
+    accValEl.textContent = Math.round(c.accuracy);
+
+    var kmh;
+    if (typeof c.speed === 'number' && c.speed !== null && c.speed >= 0) {
+      kmh = c.speed * 3.6;
+    } else if (lastFix) {
+      var dt = (pos.timestamp - lastFix.t) / 1000;
+      if (dt > 0.2) {
+        var dist = haversineMeters(lastFix.lat, lastFix.lon, c.latitude, c.longitude);
+        kmh = (dist / dt) * 3.6;
+      } else {
+        kmh = smoothedKmh;
+      }
+    } else {
+      kmh = 0;
+    }
+    lastFix = { lat: c.latitude, lon: c.longitude, t: pos.timestamp };
+    renderSpeed(kmh);
+  }
+
+  function handleError(err){
+    gpsDot.className = 'gps-dot weak';
+    gpsText.textContent = 'sin señal GPS';
+  }
+
+  function startWatch(){
+    watchId = navigator.geolocation.watchPosition(handlePosition, handleError, {
+      enableHighAccuracy: true,
+      maximumAge: 500,
+      timeout: 8000
+    });
+  }
+
+  async function requestWakeLock(){
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLock = await navigator.wakeLock.request('screen');
+      }
+    } catch(e){ /* not supported / denied, silently ignore */ }
+  }
+
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible' && !app.classList.contains('hidden')) requestWakeLock();
+  });
+
+  resetBtn.addEventListener('click', function(){
+    maxSpeed = 0;
+    maxValEl.textContent = 0;
+  });
+
+  startBtn.addEventListener('click', function(){
+    if (!navigator.geolocation) {
+      errBox.textContent = 'Este navegador no soporta ubicación GPS.';
+      errBox.classList.remove('hidden');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(function(){
+      gate.classList.add('hidden');
+      app.classList.remove('hidden');
+      startWatch();
+      requestWakeLock();
+    }, function(err){
+      if (err.code === 1) {
+        errBox.textContent = 'Permiso de ubicación denegado. Actívalo en los ajustes del navegador para este sitio.';
+      } else {
+        errBox.textContent = 'No se pudo obtener tu ubicación. Verifica que el GPS esté activado.';
+      }
+      errBox.classList.remove('hidden');
+    }, { enableHighAccuracy: true, timeout: 10000 });
+  });
+
+  window.addEventListener('beforeunload', function(){
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  });
+
+})();
+</script>
+</body>
+</html>
