@@ -15,7 +15,7 @@
     --ink-ghost:#e2ddcd;
     --dim:#8a8372;
     --line:#ddd7c4;
-    --red:#c62828;   
+    --red:#c62828;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{
@@ -154,7 +154,7 @@
   <!-- APP -->
   <div id="app" class="hidden" style="display:flex; flex-direction:column; flex:1;">
     <div class="topbar">
-      <span>Velocímetro</span>
+      <span class="gps"><span class="gps-dot" id="wakeDot"></span><span id="wakeText">pantalla…</span></span>
       <span class="gps"><span class="gps-dot" id="gpsDot"></span><span id="gpsText">buscando señal</span></span>
     </div>
 
@@ -195,7 +195,11 @@
   var N_SEGMENTS = 32;
 
   var lastFix = null;
-  var smoothedKmh = 0;
+  var targetKmh = 0;      // latest GPS-derived speed, lightly smoothed
+  var displayedKmh = 0;   // what's actually rendered, eased toward targetKmh every frame
+  var isAlert = false;    // current alert state, with hysteresis to avoid flicker
+  var ALERT_ON = 2;       // enters alert this many km/h above the limit
+  var ALERT_OFF = 2;      // leaves alert this many km/h below the limit
 
   var gate = document.getElementById('gate');
   var app = document.getElementById('app');
@@ -204,6 +208,8 @@
   var speedVal = document.getElementById('speedVal');
   var gpsDot = document.getElementById('gpsDot');
   var gpsText = document.getElementById('gpsText');
+  var wakeDot = document.getElementById('wakeDot');
+  var wakeText = document.getElementById('wakeText');
   var bargraph = document.getElementById('bargraph');
   var maxValEl = document.getElementById('maxVal');
   var accValEl = document.getElementById('accVal');
@@ -250,20 +256,35 @@
     });
   }
 
-  function renderSpeed(kmh){
-    smoothedKmh = smoothedKmh === 0 ? kmh : smoothedKmh*0.65 + kmh*0.35;
-    var display = Math.max(0, Math.round(smoothedKmh));
-    var over = display > limitKmh;
+  // Renders whatever displayedKmh currently is. Called every animation frame,
+  // not just when a new GPS fix arrives, so the number glides instead of jumping.
+  function renderFrame(){
+    var display = Math.max(0, Math.round(displayedKmh));
+
+    // hysteresis: only flip the alert state once we're clearly past the
+    // threshold in either direction, so it doesn't flicker right at the limit
+    if (!isAlert && display >= limitKmh + ALERT_ON) isAlert = true;
+    else if (isAlert && display <= limitKmh - ALERT_OFF) isAlert = false;
 
     speedVal.textContent = display;
-    document.body.classList.toggle('alert', over);
+    document.body.classList.toggle('alert', isAlert);
 
     if (display > maxSpeed){
       maxSpeed = display;
       maxValEl.textContent = maxSpeed;
     }
-    updateBar(display, over);
+    updateBar(display, isAlert);
   }
+
+  function animationLoop(){
+    // ease displayedKmh toward targetKmh a little each frame (~60fps),
+    // rather than snapping straight to the newest GPS reading
+    displayedKmh += (targetKmh - displayedKmh) * 0.12;
+    if (Math.abs(targetKmh - displayedKmh) < 0.05) displayedKmh = targetKmh;
+    renderFrame();
+    requestAnimationFrame(animationLoop);
+  }
+  requestAnimationFrame(animationLoop);
 
   function handlePosition(pos){
     var c = pos.coords;
@@ -280,13 +301,14 @@
         var dist = haversineMeters(lastFix.lat, lastFix.lon, c.latitude, c.longitude);
         kmh = (dist / dt) * 3.6;
       } else {
-        kmh = smoothedKmh;
+        kmh = targetKmh;
       }
     } else {
       kmh = 0;
     }
     lastFix = { lat: c.latitude, lon: c.longitude, t: pos.timestamp };
-    renderSpeed(kmh);
+    // light smoothing on the target itself, to iron out raw GPS jitter
+    targetKmh = targetKmh === 0 ? kmh : targetKmh*0.6 + kmh*0.4;
   }
 
   function handleError(err){
@@ -302,12 +324,36 @@
     });
   }
 
+  function setWakeStatus(state){
+    // state: 'on' | 'off' | 'unsupported'
+    if (state === 'on'){
+      wakeDot.className = 'gps-dot ok';
+      wakeText.textContent = 'pantalla activa';
+    } else if (state === 'unsupported'){
+      wakeDot.className = 'gps-dot weak';
+      wakeText.textContent = 'sin bloqueo auto';
+    } else {
+      wakeDot.className = 'gps-dot weak';
+      wakeText.textContent = 'pantalla libre';
+    }
+  }
+
   async function requestWakeLock(){
     try {
       if ('wakeLock' in navigator) {
         wakeLock = await navigator.wakeLock.request('screen');
+        setWakeStatus('on');
+        wakeLock.addEventListener('release', function(){
+          setWakeStatus('off');
+        });
+      } else {
+        // Older WebViews (some Opera/Android builds) don't expose the Wake Lock API at all.
+        setWakeStatus('unsupported');
       }
-    } catch(e){ /* not supported / denied, silently ignore */ }
+    } catch(e){
+      // permission denied or battery saver blocking it — surface this instead of failing silently
+      setWakeStatus('off');
+    }
   }
 
   document.addEventListener('visibilitychange', function(){
