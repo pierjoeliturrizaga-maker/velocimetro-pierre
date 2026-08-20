@@ -360,6 +360,15 @@
     if (document.visibilityState === 'visible' && !app.classList.contains('hidden')) requestWakeLock();
   });
 
+  // Some Android skins (Huawei/EMUI in particular) can silently revoke the
+  // wake lock without firing a visibilitychange — poll periodically and
+  // re-request it if it's gone, instead of waiting for the user to switch apps.
+  setInterval(function(){
+    if (!app.classList.contains('hidden') && document.visibilityState === 'visible' && (!wakeLock || wakeLock.released)) {
+      requestWakeLock();
+    }
+  }, 20000);
+
   resetBtn.addEventListener('click', function(){
     maxSpeed = 0;
     maxValEl.textContent = 0;
