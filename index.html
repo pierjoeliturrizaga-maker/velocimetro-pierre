@@ -342,32 +342,70 @@
     try {
       if ('wakeLock' in navigator) {
         wakeLock = await navigator.wakeLock.request('screen');
-        setWakeStatus('on');
         wakeLock.addEventListener('release', function(){
-          setWakeStatus('off');
+          checkWakeState();
         });
-      } else {
-        // Older WebViews (some Opera/Android builds) don't expose the Wake Lock API at all.
-        setWakeStatus('unsupported');
       }
-    } catch(e){
-      // permission denied or battery saver blocking it — surface this instead of failing silently
-      setWakeStatus('off');
-    }
+    } catch(e){ /* fine — the video fallback below is the one actually relied on */ }
+    checkWakeState();
+  }
+
+  // ---- fallback keep-awake: a silent, invisible looping video ----
+  // The official Wake Lock permission gets silently revoked by some Android
+  // skins (this is what was happening on your phone). A looping muted video
+  // is a long-standing trick that Android tends to respect far more
+  // consistently, because it looks like active media playback rather than
+  // a background permission it can quietly reclaim.
+  var noSleepVideo = null;
+  function enableNoSleepVideo(){
+    if (noSleepVideo) { noSleepVideo.play().catch(function(){}); return; }
+    try {
+      var canvas = document.createElement('canvas');
+      canvas.width = 1; canvas.height = 1;
+      var ctx = canvas.getContext('2d');
+      setInterval(function(){ ctx.fillRect(0, 0, 1, 1); }, 1000);
+      var stream = canvas.captureStream(1);
+      var video = document.createElement('video');
+      video.setAttribute('playsinline', '');
+      video.setAttribute('muted', '');
+      video.muted = true;
+      video.style.position = 'fixed';
+      video.style.width = '1px';
+      video.style.height = '1px';
+      video.style.opacity = '0';
+      video.style.pointerEvents = 'none';
+      video.srcObject = stream;
+      document.body.appendChild(video);
+      video.play().catch(function(){});
+      noSleepVideo = video;
+    } catch(e){ /* canvas.captureStream unsupported — Wake Lock API is all we have then */ }
+  }
+
+  function checkWakeState(){
+    var lockOk = wakeLock && !wakeLock.released;
+    var videoOk = noSleepVideo && !noSleepVideo.paused;
+    if (lockOk || videoOk) setWakeStatus('on');
+    else if (!('wakeLock' in navigator) && !noSleepVideo) setWakeStatus('unsupported');
+    else setWakeStatus('off');
   }
 
   document.addEventListener('visibilitychange', function(){
-    if (document.visibilityState === 'visible' && !app.classList.contains('hidden')) requestWakeLock();
+    if (document.visibilityState === 'visible' && !app.classList.contains('hidden')) {
+      requestWakeLock();
+      if (noSleepVideo) noSleepVideo.play().catch(function(){});
+    }
   });
 
-  // Some Android skins (Huawei/EMUI in particular) can silently revoke the
-  // wake lock without firing a visibilitychange — poll periodically and
-  // re-request it if it's gone, instead of waiting for the user to switch apps.
+  // Periodic health check — re-requests the official lock when possible,
+  // and keeps the video fallback actually playing (some browsers pause it
+  // when the tab is briefly backgrounded).
   setInterval(function(){
-    if (!app.classList.contains('hidden') && document.visibilityState === 'visible' && (!wakeLock || wakeLock.released)) {
-      requestWakeLock();
+    if (!app.classList.contains('hidden') && document.visibilityState === 'visible') {
+      if (!wakeLock || wakeLock.released) requestWakeLock();
+      if (noSleepVideo && noSleepVideo.paused) noSleepVideo.play().catch(function(){});
+      checkWakeState();
     }
-  }, 20000);
+  }, 15000);
 
   resetBtn.addEventListener('click', function(){
     maxSpeed = 0;
@@ -384,6 +422,7 @@
       gate.classList.add('hidden');
       app.classList.remove('hidden');
       startWatch();
+      enableNoSleepVideo();
       requestWakeLock();
     }, function(err){
       if (err.code === 1) {
